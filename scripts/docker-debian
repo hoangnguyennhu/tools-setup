@@ -1,0 +1,74 @@
+#!/bin/bash
+
+# Màu sắc
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m' 
+
+echo -e "${GREEN}=== Docker Setup Script (Fix for Debian/Ubuntu) ===${NC}"
+
+# 1. Kiểm tra sudo
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}Vui lòng chạy: sudo bash setup_docker.sh${NC}"
+  exit 1
+fi
+
+# 2. Xác định OS (Debian hay Ubuntu)
+OS_ID=$(grep -oP '(?<=^ID=).+' /etc/os-release | tr -d '"')
+VERSION_CODENAME=$(grep -oP '(?<=^VERSION_CODENAME=).+' /etc/os-release | tr -d '"')
+
+echo -e "${YELLOW}Hệ điều hành phát hiện: $OS_ID ($VERSION_CODENAME)${NC}"
+
+# 3. Idempotent: Kiểm tra và hỏi trước khi gỡ/cài
+if command -v docker &> /dev/null; then
+    echo -e "${YELLOW}Docker đã tồn tại.${NC}"
+    read -p "Bạn có muốn GỠ SẠCH để cài lại không? (y/N): " choice
+    if [[ "$choice" =~ ^[Yy]$ ]]; then
+        apt-get purge -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        rm -rf /var/lib/docker
+        echo -e "${GREEN}Đã gỡ bỏ bản cũ.${NC}"
+    else
+        echo -e "${GREEN}Đang cập nhật/cấu hình lại...${NC}"
+    fi
+fi
+
+# 4. Cài đặt dependencies
+apt-get update
+apt-get install -y ca-certificates curl gnupg
+
+# 5. Thiết lập Keyring và Repo chuẩn cho $OS_ID
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/$OS_ID/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$OS_ID \
+  $VERSION_CODENAME stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 6. Cài đặt Docker
+echo -e "${YELLOW}Đang tải Docker từ repository của $OS_ID...${NC}"
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 7. Cấp quyền cho user 'dev' (Hoặc user hiện tại)
+TARGET_USER="dev"
+if id "$TARGET_USER" &>/dev/null; then
+    groupadd -f docker
+    usermod -aG docker $TARGET_USER
+    echo -e "${GREEN}Đã cấp quyền cho user: $TARGET_USER${NC}"
+else
+    # Nếu không có user dev, cấp cho user gọi sudo
+    usermod -aG docker $SUDO_USER
+    echo -e "${GREEN}Đã cấp quyền cho user: $SUDO_USER${NC}"
+fi
+
+# 8. Khởi động và dọn dẹp
+systemctl enable docker
+systemctl restart docker
+
+echo -e "${GREEN}=== CÀI ĐẶT THÀNH CÔNG! ===${NC}"
+docker --version
+
+echo -e "${YELLOW}Để dùng ngay không cần reboot, hãy gõ lệnh này:${NC}"
+echo -e "newgrp docker"
